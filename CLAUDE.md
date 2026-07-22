@@ -9,8 +9,9 @@ Deno-based HTTP server implementing the
 [Nx Custom Self-Hosted Remote Cache specification](https://nx.dev/recipes/running-tasks/self-hosted-caching#build-your-own-caching-server).
 Uses Hono as the HTTP framework and S3-compatible storage (real AWS S3 in
 production; [emulate.dev](https://emulate.dev) for local dev/tests) as the cache
-backend. Published as a multi-platform Docker image to
-`ghcr.io/ikatsuba/nx-cache-server`.
+backend. Deployed by building the repo's `Dockerfile` directly; upstream
+publishes a multi-platform image to `ghcr.io/ikatsuba/nx-cache-server`, but this
+repo's CI does not push images or charts.
 
 ## Commands
 
@@ -66,6 +67,12 @@ with mock env bindings without starting a real server.
   builds and verifies cache miss then cache hit. Uses `@david/dax` for shell
   commands.
 
+**Emulator limitation:** `emulate.dev` does not implement S3 multipart uploads
+(`CreateMultipartUpload` returns a JSON 404). Uploads under the 5 MB part size
+take `lib-storage`'s single-`PutObject` path and work fine; larger artifacts
+only work against real S3. The multipart unit test is therefore skipped unless
+`TEST_MULTIPART=1` and `S3_ENDPOINT_URL` points at a real bucket.
+
 Both suites are self-contained — no Docker, no separate `deno task dev`.
 
 ## Environment Variables
@@ -80,14 +87,14 @@ Local dev values are in `.env.local` (emulate.dev's seeded IAM defaults:
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/main.yml`) runs on push/PR to main and
-releases:
+GitHub Actions (`.github/workflows/main.yml`) runs on push/PR to main:
 
 1. **checks**: `deno lint` + `deno fmt --check`
 2. **e2e**: runs `deno task test` + `deno task e2e` directly (each suite
    self-hosts its dependencies)
-3. **publish** (after checks + e2e pass): builds multi-platform Docker image
-   (amd64/arm64) and pushes to GHCR
+
+No image or chart is published from CI — the deployment target builds the
+`Dockerfile` from the repo.
 
 ## Conventions
 

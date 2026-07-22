@@ -5,10 +5,15 @@ import { logger } from 'hono/logger';
 import {
   GetObjectCommand,
   HeadObjectCommand,
-  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { Upload } from '@aws-sdk/lib-storage';
+
+// 5 MB is the S3 multipart minimum; with queueSize 1 an upload holds roughly
+// one part in memory regardless of artifact size.
+const UPLOAD_PART_SIZE = 5 * 1024 * 1024;
+const UPLOAD_QUEUE_SIZE = 1;
 
 export const app = new Hono<{
   Bindings: {
@@ -24,19 +29,34 @@ export const app = new Hono<{
   };
 }>();
 
+// Reuse a single S3Client (and its connection pool) instead of allocating one
+// per request. Keyed by config so tests can pass different bindings.
+const s3Clients = new Map<string, S3Client>();
+
 app.use(async (c, next) => {
-  c.set(
-    's3',
-    new S3Client({
+  const key = JSON.stringify([
+    c.env.AWS_REGION,
+    c.env.S3_ENDPOINT_URL,
+    c.env.AWS_ACCESS_KEY_ID,
+    c.env.AWS_SECRET_ACCESS_KEY,
+  ]);
+
+  let s3 = s3Clients.get(key);
+  if (!s3) {
+    s3 = new S3Client({
       region: c.env.AWS_REGION,
-      endpoint: c.env.S3_ENDPOINT_URL,
+      // Empty/unset means the default AWS endpoint for the region.
+      endpoint: c.env.S3_ENDPOINT_URL || undefined,
       credentials: {
         accessKeyId: c.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: c.env.AWS_SECRET_ACCESS_KEY,
       },
       forcePathStyle: true,
-    }),
-  );
+    });
+    s3Clients.set(key, s3);
+  }
+
+  c.set('s3', s3);
 
   await next();
 });
@@ -108,15 +128,20 @@ app.put('/v1/cache/:hash', auth(), async (c) => {
       }
     }
 
-    const body = await c.req.arrayBuffer();
-
-    await c.get('s3').send(
-      new PutObjectCommand({
+    // Stream the request body straight to S3 — buffering the whole artifact
+    // (arrayBuffer()) put a full copy in off-heap memory per concurrent upload.
+    const upload = new Upload({
+      client: c.get('s3'),
+      params: {
         Bucket: c.env.S3_BUCKET_NAME,
         Key: hash,
-        Body: new Uint8Array(body),
-      }),
-    );
+        Body: c.req.raw.body ?? new Uint8Array(),
+      },
+      partSize: UPLOAD_PART_SIZE,
+      queueSize: UPLOAD_QUEUE_SIZE,
+    });
+
+    await upload.done();
 
     return new Response('Successfully uploaded', {
       status: 200,
