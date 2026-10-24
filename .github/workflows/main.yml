@@ -21,7 +21,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.9.7
+          deno-version: v2.9.8
       - name: Run lint
         run: deno lint
       - name: Run format check
@@ -37,7 +37,7 @@ jobs:
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.9.7
+          deno-version: v2.9.8
       - name: Run tests
         run: |
           deno task test
